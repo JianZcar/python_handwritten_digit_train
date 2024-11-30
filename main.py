@@ -39,15 +39,12 @@ def load_images_from_directory(base_path, target_size=(28, 28), output_dir="proc
             else:
                 img_gray = img_rgb  # Already grayscale (1 channel)
 
-            # Apply threshold to ensure digits are black and background is white
-            _, img_bin = cv2.threshold(img_gray, 200, 255, cv2.THRESH_BINARY_INV)
+            # Apply adaptive thresholding for better binarization
+            img_bin = cv2.adaptiveThreshold(img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
 
-            # If the image is not 28x28, resize it while keeping the aspect ratio
-            if img_bin.shape != target_size:
-                processed_img = resize_with_aspect_ratio(img_bin, target_size)
-            else:
-                processed_img = img_bin  # No need to resize if it's already 28x28
-
+            # Resize the image with aspect ratio maintenance
+            processed_img = resize_with_aspect_ratio(img_bin, target_size)
+            
             # Save the processed image
             output_path = os.path.join(output_folder, filename)
             cv2.imwrite(output_path, processed_img)
@@ -120,6 +117,12 @@ def main():
     # Create and train the k-NN classifier
     print("Training k-NN classifier...")
     knn = cv2.ml.KNearest_create()
+
+    # Weights the k-NN by distance to make it more robust
+    knn.setDefaultK(5)  # You can experiment with different k values
+    knn.setAlgorithmType(cv2.ml.KNearest_BRUTE_FORCE)  # Ensure brute-force search for better performance
+
+    # Train the classifier with the training data
     knn.train(train_images, cv2.ml.ROW_SAMPLE, train_labels)
     print("Training complete.")
 
