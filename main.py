@@ -17,17 +17,18 @@ def load_images_from_directory(base_path, target_size=(28, 28), output_dir="proc
             os.makedirs(output_folder)
         
         if not os.path.exists(folder_path):
+            print(f"Warning: Directory {folder_path} does not exist. Skipping.")
             continue
         
         for filename in os.listdir(folder_path):
             img_path = os.path.join(folder_path, filename)
             img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)  # Load image with alpha channel if present
             if img is None:
+                print(f"Warning: Unable to load {img_path}. Skipping.")
                 continue
             
             # If image has transparency (alpha channel), replace it with white
             if len(img.shape) == 3 and img.shape[2] == 4:  # Check for alpha channel
-                # Create a white background
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)  # Remove alpha channel
                 img_rgb[img[:, :, 3] == 0] = [255, 255, 255]  # Set transparent pixels to white
             else:
@@ -39,8 +40,11 @@ def load_images_from_directory(base_path, target_size=(28, 28), output_dir="proc
             else:
                 img_gray = img_rgb  # Already grayscale (1 channel)
 
-            # Apply adaptive thresholding for better binarization
-            img_bin = cv2.adaptiveThreshold(img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+            # Apply adaptive thresholding with dynamic block size
+            block_size = max(3, (min(img_gray.shape) // 10) | 1)  # Ensure odd block size
+            img_bin = cv2.adaptiveThreshold(
+                img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, block_size, 2
+            )
 
             # Resize the image with aspect ratio maintenance
             processed_img = resize_with_aspect_ratio(img_bin, target_size)
@@ -59,7 +63,6 @@ def resize_with_aspect_ratio(image, target_size=(28, 28)):
     """
     Resize an image while maintaining its aspect ratio. The resized image is placed on a white canvas of the target size.
     """
-    # Get original dimensions
     h, w = image.shape
 
     # Calculate scaling factor
@@ -86,58 +89,70 @@ def resize_with_aspect_ratio(image, target_size=(28, 28)):
 def normalize_data(images):
     return images / 255.0
 
-# Split dataset into training and testing sets manually
+# Stratified dataset splitting
 def split_data(images, labels, test_size=0.2):
-    indices = np.arange(len(images))
-    np.random.shuffle(indices)  # Shuffle indices
-    
-    split_idx = int(len(images) * (1 - test_size))  # Split index
-    train_indices, test_indices = indices[:split_idx], indices[split_idx:]
-    
+    unique_labels, label_counts = np.unique(labels, return_counts=True)
+    test_indices = []
+    train_indices = []
+
+    for label, count in zip(unique_labels, label_counts):
+        label_indices = np.where(labels == label)[0]
+        np.random.shuffle(label_indices)
+        split_idx = int(count * (1 - test_size))
+        train_indices.extend(label_indices[:split_idx])
+        test_indices.extend(label_indices[split_idx:])
+
+    np.random.shuffle(train_indices)
+    np.random.shuffle(test_indices)
+
     train_images, test_images = images[train_indices], images[test_indices]
     train_labels, test_labels = labels[train_indices], labels[test_indices]
     
     return train_images, test_images, train_labels, test_labels
 
+def evaluate_model(results, true_labels):
+    from collections import Counter
+    accuracy = np.mean(results.flatten() == true_labels) * 100
+    print(f"Accuracy: {accuracy:.2f}%")
+
+    # Confusion matrix
+    unique_labels = np.unique(true_labels)
+    confusion_matrix = np.zeros((len(unique_labels), len(unique_labels)), dtype=np.int32)
+    for true, pred in zip(true_labels, results.flatten()):
+        confusion_matrix[int(true), int(pred)] += 1
+
+    print("Confusion Matrix:")
+    print(confusion_matrix)
+    return accuracy
+
 # Main program
 def main():
-    # Path to your dataset directory
     dataset_path = "data"  # Replace with your dataset's path
     processed_path = "processed"
 
-    # Load and preprocess images, then save them to the processed directory
     print("Loading and preprocessing dataset...")
     images, labels = load_images_from_directory(dataset_path, output_dir=processed_path)
     images = normalize_data(images)
     print(f"Loaded {len(images)} images and saved to {processed_path}/.")
 
-    # Split into training and testing datasets
     train_images, test_images, train_labels, test_labels = split_data(images, labels, test_size=0.2)
 
-    # Create and train the k-NN classifier
     print("Training k-NN classifier...")
     knn = cv2.ml.KNearest_create()
+    knn.setDefaultK(5)
+    knn.setAlgorithmType(cv2.ml.KNearest_BRUTE_FORCE)
 
-    # Weights the k-NN by distance to make it more robust
-    knn.setDefaultK(5)  # You can experiment with different k values
-    knn.setAlgorithmType(cv2.ml.KNearest_BRUTE_FORCE)  # Ensure brute-force search for better performance
-
-    # Train the classifier with the training data
     knn.train(train_images, cv2.ml.ROW_SAMPLE, train_labels)
     print("Training complete.")
 
-    # Save the trained model
     model_filename = "knn_model.xml"
     knn.save(model_filename)
     print(f"Model saved to {model_filename}")
 
-    # Test the classifier
     print("Testing the model...")
     ret, results, neighbors, dist = knn.findNearest(test_images, k=5)
 
-    # Evaluate accuracy
-    accuracy = np.mean(results.flatten() == test_labels) * 100
-    print(f"Accuracy: {accuracy:.2f}%")
+    evaluate_model(results, test_labels)
 
 if __name__ == "__main__":
     main()
