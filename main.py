@@ -26,15 +26,18 @@ def load_images_from_directory(base_path, target_size=(28, 28), output_dir="proc
                 continue
             
             # If image has transparency (alpha channel), replace it with white
-            if img.shape[2] == 4:  # Check for alpha channel
+            if len(img.shape) == 3 and img.shape[2] == 4:  # Check for alpha channel
                 # Create a white background
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)  # Remove alpha channel
                 img_rgb[img[:, :, 3] == 0] = [255, 255, 255]  # Set transparent pixels to white
             else:
                 img_rgb = img  # No transparency, just use the image as is
             
-            # Convert to grayscale
-            img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
+            # If the image has 3 channels (RGB/BGR), convert to grayscale
+            if len(img_rgb.shape) == 3:
+                img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
+            else:
+                img_gray = img_rgb  # Already grayscale (1 channel)
 
             # Apply threshold to ensure digits are black and background is white
             _, img_bin = cv2.threshold(img_gray, 200, 255, cv2.THRESH_BINARY_INV)
