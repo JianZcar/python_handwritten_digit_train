@@ -85,20 +85,96 @@ def split_data(images, labels, test_size=0.2):
 
     return images[train_indices], images[test_indices], labels[train_indices], labels[test_indices]
 
-# Evaluate model accuracy
-def evaluate_model(results, true_labels):
-    accuracy = np.mean(results.flatten() == true_labels) * 100
-    print(f"Accuracy: {accuracy:.2f}%")
+# Leaky ReLU activation function
+def leaky_relu(x, alpha=0.01):
+    return np.where(x > 0, x, alpha * x)
 
+# Softmax activation function
+def softmax(x):
+    exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+    return exp_x / np.sum(exp_x, axis=1, keepdims=True)
+
+# Forward pass of the neural network
+def forward_pass(X, weights, biases):
+    return np.dot(X, weights) + biases
+
+# Backpropagation to update weights and biases
+def backpropagation(X, y, weights_1, biases_1, weights_2, biases_2, hidden_layer_output, output_layer, learning_rate=0.001):
+    m = X.shape[0]
+    
+    # Error for the output layer (cross-entropy loss derivative)
+    output_error = output_layer - y
+    
+    # Gradients for weights_2 and biases_2
+    dW_2 = np.dot(hidden_layer_output.T, output_error) / m
+    db_2 = np.sum(output_error, axis=0, keepdims=True) / m
+    
+    # Error for the hidden layer
+    hidden_error = np.dot(output_error, weights_2.T) * (hidden_layer_output > 0)  # Leaky ReLU derivative
+    
+    # Gradients for weights_1 and biases_1
+    dW_1 = np.dot(X.T, hidden_error) / m
+    db_1 = np.sum(hidden_error, axis=0, keepdims=True) / m
+    
+    # Update weights and biases
+    weights_1 -= learning_rate * dW_1
+    biases_1 -= learning_rate * db_1
+    weights_2 -= learning_rate * dW_2
+    biases_2 -= learning_rate * db_2
+    
+    return weights_1, biases_1, weights_2, biases_2
+
+# Train the MLP model with mini-batch gradient descent
+def train_mlp(train_images, train_labels, input_size, hidden_size, output_size, epochs=50, learning_rate=0.001, batch_size=64):
+    # Xavier initialization for better weight starting points
+    weights_1 = np.random.randn(input_size, hidden_size) * np.sqrt(2. / input_size)
+    biases_1 = np.zeros((1, hidden_size))
+    
+    weights_2 = np.random.randn(hidden_size, output_size) * np.sqrt(2. / hidden_size)
+    biases_2 = np.zeros((1, output_size))
+    
+    # Convert labels to one-hot encoding
+    y_train = np.eye(output_size)[train_labels]
+    
+    # Mini-batch gradient descent
+    for epoch in range(epochs):
+        print(f"Epoch {epoch + 1}/{epochs}")
+        
+        # Shuffle data for mini-batch
+        indices = np.random.permutation(len(train_images))
+        train_images = train_images[indices]
+        y_train = y_train[indices]
+        
+        # Mini-batch training
+        for i in range(0, len(train_images), batch_size):
+            X_batch = train_images[i:i+batch_size]
+            y_batch = y_train[i:i+batch_size]
+            
+            # Forward pass
+            hidden_layer = leaky_relu(forward_pass(X_batch, weights_1, biases_1))
+            output_layer = softmax(forward_pass(hidden_layer, weights_2, biases_2))
+            
+            # Backpropagation
+            weights_1, biases_1, weights_2, biases_2 = backpropagation(X_batch, y_batch, weights_1, biases_1, weights_2, biases_2, hidden_layer, output_layer, learning_rate)
+        
+    return weights_1, biases_1, weights_2, biases_2
+
+# Evaluate model accuracy
+def evaluate_model(test_images, test_labels, weights_1, biases_1, weights_2, biases_2):
+    hidden_layer = leaky_relu(forward_pass(test_images, weights_1, biases_1))
+    output_layer = softmax(forward_pass(hidden_layer, weights_2, biases_2))
+    
+    predictions = np.argmax(output_layer, axis=1)
+    accuracy = np.mean(predictions == test_labels) * 100
+    print(f"Accuracy: {accuracy:.2f}%")
+    
     # Confusion matrix
-    unique_labels = np.unique(true_labels)
-    confusion_matrix = np.zeros((len(unique_labels), len(unique_labels)), dtype=np.int32)
-    for true, pred in zip(true_labels, results.flatten()):
-        confusion_matrix[int(true), int(pred)] += 1
+    confusion_matrix = np.zeros((10, 10), dtype=np.int32)
+    for true, pred in zip(test_labels, predictions):
+        confusion_matrix[true, pred] += 1
 
     print("Confusion Matrix:")
     print(confusion_matrix)
-    return accuracy
 
 # Main program
 def main():
@@ -112,21 +188,16 @@ def main():
 
     train_images, test_images, train_labels, test_labels = split_data(images, labels)
 
-    print("Training k-NN classifier...")
-    knn = cv2.ml.KNearest_create()
-    knn.setDefaultK(5)
-    knn.setAlgorithmType(cv2.ml.KNearest_BRUTE_FORCE)
+    input_size = 28 * 28  # Flattened 28x28 images
+    hidden_size = 256     # Larger hidden layer size for better capacity
+    output_size = 10      # Output layer size (10 classes)
 
-    knn.train(train_images, cv2.ml.ROW_SAMPLE, train_labels)
+    print("Training MLP classifier...")
+    weights_1, biases_1, weights_2, biases_2 = train_mlp(train_images, train_labels, input_size, hidden_size, output_size, epochs=50, learning_rate=0.001, batch_size=64)
     print("Training complete.")
 
-    model_filename = "knn_model.xml"
-    knn.save(model_filename)
-    print(f"Model saved to {model_filename}")
-
     print("Testing the model...")
-    _, results, _, _ = knn.findNearest(test_images, k=5)
-    evaluate_model(results, test_labels)
+    evaluate_model(test_images, test_labels, weights_1, biases_1, weights_2, biases_2)
 
 if __name__ == "__main__":
     main()
