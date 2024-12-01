@@ -3,25 +3,25 @@ import pickle
 import os
 import cv2
 
-# Function to save the trained MLP model
-def save_model(weights_1, biases_1, weights_2, biases_2, filename="mlp_model.pkl"):
+# Unchanged functions
+def save_model(weights_1, biases_1, weights_2, biases_2, weights_3, biases_3, filename="mlp_model.pkl"):
     model = {
         'weights_1': weights_1,
         'biases_1': biases_1,
         'weights_2': weights_2,
-        'biases_2': biases_2
+        'biases_2': biases_2,
+        'weights_3': weights_3,
+        'biases_3': biases_3
     }
     with open(filename, 'wb') as f:
         pickle.dump(model, f)
     print(f"Model saved to {filename}")
 
-# Function to load the MLP model
 def load_model(filename="mlp_model.pkl"):
     with open(filename, 'rb') as f:
         model = pickle.load(f)
-    return model['weights_1'], model['biases_1'], model['weights_2'], model['biases_2']
+    return model['weights_1'], model['biases_1'], model['weights_2'], model['biases_2'], model['weights_3'], model['biases_3']
 
-# Load and preprocess images
 def load_images_from_directory(base_path, target_size=(28, 28), output_dir="processed"):
     images, labels = [], []
     os.makedirs(output_dir, exist_ok=True)
@@ -51,7 +51,6 @@ def load_images_from_directory(base_path, target_size=(28, 28), output_dir="proc
 
     return np.array(images, dtype=np.float32), np.array(labels, dtype=np.int32)
 
-# Preprocess individual images
 def preprocess_image(img, target_size):
     if img.shape[-1] == 4:  # Image has alpha channel
         img = remove_alpha_channel(img)
@@ -64,13 +63,11 @@ def preprocess_image(img, target_size):
 
     return resize_with_aspect_ratio(img_bin, target_size)
 
-# Remove alpha channel and replace transparent pixels with white
 def remove_alpha_channel(img):
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
     img_rgb[img[:, :, 3] == 0] = [255, 255, 255]
     return img_rgb
 
-# Resize an image with aspect ratio maintenance
 def resize_with_aspect_ratio(image, target_size):
     h, w = image.shape
     scale = min(target_size[0] / h, target_size[1] / w)
@@ -83,11 +80,9 @@ def resize_with_aspect_ratio(image, target_size):
     canvas[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = resized_image
     return canvas
 
-# Normalize images to [0, 1]
 def normalize_data(images):
     return images / 255.0
 
-# Split data into train and test sets
 def split_data(images, labels, test_size=0.2):
     np.random.seed(42)  # Ensures reproducibility
     indices = np.arange(len(labels))
@@ -98,44 +93,60 @@ def split_data(images, labels, test_size=0.2):
 
     return images[train_indices], images[test_indices], labels[train_indices], labels[test_indices]
 
-# Leaky ReLU activation function
 def leaky_relu(x, alpha=0.01):
     return np.where(x > 0, x, alpha * x)
 
-# Softmax activation function
 def softmax(x):
     exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
     return exp_x / np.sum(exp_x, axis=1, keepdims=True)
 
-# Forward pass of the neural network
-def forward_pass(X, weights, biases):
-    return np.dot(X, weights) + biases
+def forward_pass(X, weights_1, biases_1, weights_2, biases_2, weights_3, biases_3):
+    hidden_layer_1 = leaky_relu(np.dot(X, weights_1) + biases_1)
+    hidden_layer_2 = leaky_relu(np.dot(hidden_layer_1, weights_2) + biases_2)
+    output_layer = softmax(np.dot(hidden_layer_2, weights_3) + biases_3)
+    return hidden_layer_1, hidden_layer_2, output_layer
 
-# Backpropagation to update weights and biases
-def backpropagation(X, y, weights_1, biases_1, weights_2, biases_2, hidden_layer_output, output_layer, learning_rate=0.001):
+def backpropagation(X, y, weights_1, biases_1, weights_2, biases_2, weights_3, biases_3, 
+                     hidden_layer_1, hidden_layer_2, output_layer, learning_rate=0.001):
     m = X.shape[0]
+    
+    # Output layer error
     output_error = output_layer - y
-    dW_2 = np.dot(hidden_layer_output.T, output_error) / m
-    db_2 = np.sum(output_error, axis=0, keepdims=True) / m
+    dW_3 = np.dot(hidden_layer_2.T, output_error) / m
+    db_3 = np.sum(output_error, axis=0, keepdims=True) / m
     
-    hidden_error = np.dot(output_error, weights_2.T) * (hidden_layer_output > 0)
-    dW_1 = np.dot(X.T, hidden_error) / m
-    db_1 = np.sum(hidden_error, axis=0, keepdims=True) / m
+    # Hidden layer 2 error
+    hidden_layer_2_error = np.dot(output_error, weights_3.T) * (hidden_layer_2 > 0)
+    dW_2 = np.dot(hidden_layer_1.T, hidden_layer_2_error) / m
+    db_2 = np.sum(hidden_layer_2_error, axis=0, keepdims=True) / m
     
+    # Hidden layer 1 error
+    hidden_layer_1_error = np.dot(hidden_layer_2_error, weights_2.T) * (hidden_layer_1 > 0)
+    dW_1 = np.dot(X.T, hidden_layer_1_error) / m
+    db_1 = np.sum(hidden_layer_1_error, axis=0, keepdims=True) / m
+    
+    # Update weights and biases
     weights_1 -= learning_rate * dW_1
     biases_1 -= learning_rate * db_1
     weights_2 -= learning_rate * dW_2
     biases_2 -= learning_rate * db_2
+    weights_3 -= learning_rate * dW_3
+    biases_3 -= learning_rate * db_3
     
-    return weights_1, biases_1, weights_2, biases_2
+    return weights_1, biases_1, weights_2, biases_2, weights_3, biases_3
 
-# Train the MLP model with mini-batch gradient descent
-def train_mlp(train_images, train_labels, input_size, hidden_size, output_size, epochs=50, learning_rate=0.001, batch_size=64):
-    weights_1 = np.random.randn(input_size, hidden_size) * np.sqrt(2. / input_size)
-    biases_1 = np.zeros((1, hidden_size))
+# Updated training function with three layers
+def train_mlp(train_images, train_labels, input_size, hidden_size_1, hidden_size_2, output_size, 
+              epochs=50, learning_rate=0.001, batch_size=64):
+    # Initialize weights and biases for 3 layers
+    weights_1 = np.random.randn(input_size, hidden_size_1) * np.sqrt(2. / input_size)
+    biases_1 = np.zeros((1, hidden_size_1))
     
-    weights_2 = np.random.randn(hidden_size, output_size) * np.sqrt(2. / hidden_size)
-    biases_2 = np.zeros((1, output_size))
+    weights_2 = np.random.randn(hidden_size_1, hidden_size_2) * np.sqrt(2. / hidden_size_1)
+    biases_2 = np.zeros((1, hidden_size_2))
+    
+    weights_3 = np.random.randn(hidden_size_2, output_size) * np.sqrt(2. / hidden_size_2)
+    biases_3 = np.zeros((1, output_size))
     
     y_train = np.eye(output_size)[train_labels]
     
@@ -150,17 +161,19 @@ def train_mlp(train_images, train_labels, input_size, hidden_size, output_size, 
             X_batch = train_images[i:i+batch_size]
             y_batch = y_train[i:i+batch_size]
             
-            hidden_layer = leaky_relu(forward_pass(X_batch, weights_1, biases_1))
-            output_layer = softmax(forward_pass(hidden_layer, weights_2, biases_2))
+            # Forward pass
+            hidden_layer_1, hidden_layer_2, output_layer = forward_pass(X_batch, weights_1, biases_1, weights_2, biases_2, weights_3, biases_3)
             
-            weights_1, biases_1, weights_2, biases_2 = backpropagation(X_batch, y_batch, weights_1, biases_1, weights_2, biases_2, hidden_layer, output_layer, learning_rate)
-        
-    return weights_1, biases_1, weights_2, biases_2
+            # Backpropagation
+            weights_1, biases_1, weights_2, biases_2, weights_3, biases_3 = backpropagation(
+                X_batch, y_batch, weights_1, biases_1, weights_2, biases_2, weights_3, biases_3, 
+                hidden_layer_1, hidden_layer_2, output_layer, learning_rate
+            )
+    
+    return weights_1, biases_1, weights_2, biases_2, weights_3, biases_3
 
-# Evaluate model accuracy
-def evaluate_model(test_images, test_labels, weights_1, biases_1, weights_2, biases_2):
-    hidden_layer = leaky_relu(forward_pass(test_images, weights_1, biases_1))
-    output_layer = softmax(forward_pass(hidden_layer, weights_2, biases_2))
+def evaluate_model(test_images, test_labels, weights_1, biases_1, weights_2, biases_2, weights_3, biases_3):
+    hidden_layer_1, hidden_layer_2, output_layer = forward_pass(test_images, weights_1, biases_1, weights_2, biases_2, weights_3, biases_3)
     
     predictions = np.argmax(output_layer, axis=1)
     accuracy = np.mean(predictions == test_labels) * 100
@@ -173,9 +186,8 @@ def evaluate_model(test_images, test_labels, weights_1, biases_1, weights_2, bia
     print("Confusion Matrix:")
     print(confusion_matrix)
 
-# Main function
 def main():
-    dataset_path = "data"  # Replace with your dataset's path
+    dataset_path = "data"
     processed_path = "processed"
 
     print("Loading and preprocessing dataset...")
@@ -186,18 +198,22 @@ def main():
     train_images, test_images, train_labels, test_labels = split_data(images, labels)
 
     input_size = 28 * 28  # Flattened 28x28 images
-    hidden_size = 1024     # Larger hidden layer size for better capacity
+    hidden_size_1 = 1024  # First hidden layer size
+    hidden_size_2 = 512   # Second hidden layer size
     output_size = 10      # Output layer size (10 classes)
 
     print("Training MLP classifier...")
-    weights_1, biases_1, weights_2, biases_2 = train_mlp(train_images, train_labels, input_size, hidden_size, output_size, epochs=50, learning_rate=0.001, batch_size=64)
+    weights_1, biases_1, weights_2, biases_2, weights_3, biases_3 = train_mlp(
+        train_images, train_labels, input_size, hidden_size_1, hidden_size_2, output_size, epochs=50, 
+        learning_rate=0.001, batch_size=64
+    )
     print("Training complete.")
 
     # Save the trained model
-    save_model(weights_1, biases_1, weights_2, biases_2)
+    save_model(weights_1, biases_1, weights_2, biases_2, weights_3, biases_3)
 
     print("Testing the model...")
-    evaluate_model(test_images, test_labels, weights_1, biases_1, weights_2, biases_2)
+    evaluate_model(test_images, test_labels, weights_1, biases_1, weights_2, biases_2, weights_3, biases_3)
 
 if __name__ == "__main__":
     main()
